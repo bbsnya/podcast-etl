@@ -1,4 +1,3 @@
-cat << 'EOF' > README.md
 Podcast Data ETL Pipeline
 
 An end-to-end ETL pipeline that collects podcast metadata and episode data from external APIs and RSS feeds, transforms it, and loads it into a PostgreSQL data warehouse for analytics.
