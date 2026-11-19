@@ -63,28 +63,31 @@ ETL-пайплайн для сбора, обработки и загрузки �
 ---
 
 ## Структура проекта
+
+```
 podcast-etl/
 ├── dags/
-│ └── podcast_etl_dag.py
+│   └── podcast_etl_dag.py
 ├── src/
-│ ├── init.py
-│ ├── config.py
-│ ├── extract.py
-│ ├── transform.py
-│ ├── load.py
-│ └── quality.py
+│   ├── __init__.py
+│   ├── config.py
+│   ├── extract.py
+│   ├── transform.py
+│   ├── load.py
+│   └── quality.py
 ├── sql/
-│ └── init.sql
+│   └── init.sql
 ├── tests/
-│ ├── init.py
-│ ├── test_transform.py
-│ └── test_load.py
+│   ├── __init__.py
+│   ├── test_transform.py
+│   └── test_load.py
 ├── docker-compose.yml
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
 ├── LICENSE
 └── README.md
+```
 
 ---
 
@@ -108,25 +111,41 @@ podcast-etl/
 1. Запустить все сервисы (PostgreSQL, Airflow, Metabase):
    ```bash
    docker compose up -d
-Создать файл .env на основе шаблона:
+   ```
 
-bash
-cp .env.example .env
-Открыть Airflow и запустить DAG: http://localhost:8080 (admin / admin).
-Доступ к сервисам:
+2. Создать файл `.env` на основе шаблона:
+   ```bash
+   cp .env.example .env
+   ```
 
-Сервис	URL	Логин / Пароль
-Airflow	http://localhost:8080	admin / admin
-Metabase	http://localhost:3000	настраивается при первом входе
-PostgreSQL	localhost:5432	podcast_user / podcast_pass
-Тестирование
+3. Открыть Airflow и запустить DAG: [http://localhost:8080](http://localhost:8080) (admin / admin).
 
-bash
+**Доступ к сервисам:**
+
+| Сервис | URL | Логин / Пароль |
+| :--- | :--- | :--- |
+| Airflow | http://localhost:8080 | admin / admin |
+| Metabase | http://localhost:3000 | настраивается при первом входе |
+| PostgreSQL | localhost:5432 | podcast_user / podcast_pass |
+
+---
+
+## Тестирование
+
+```bash
 docker compose exec airflow-webserver pytest /opt/airflow/tests/ -v
-Источник данных
+```
 
-Apple iTunes Search API — метаданные подкастов.
-RSS-ленты — информация о выпусках.
-Автор
+---
 
-bbsnya
+## Источник данных
+
+- **Apple iTunes Search API** — метаданные подкастов.
+- **RSS-ленты** — информация о выпусках.
+
+---
+
+## Автор
+
+**bbsnya**
+
