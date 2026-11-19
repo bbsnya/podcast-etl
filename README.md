@@ -145,6 +145,22 @@ docker compose exec airflow-webserver pytest /opt/airflow/tests/ -v
 
 ---
 
+## Скриншоты
+
+### Airflow DAG
+
+![Airflow DAG](dag.png)
+
+### Metabase Dashboard
+
+![Metabase Dashboard](dashboard.png)
+
+### Тесты
+
+![Tests](pytest.png)
+
+---
+
 ## Автор
 
 **bbsnya**
