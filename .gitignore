@@ -1,7 +1,26 @@
 .env
 __pycache__/
 *.pyc
-.DS_Store
-postgres_data/
 .pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+.idea/
+.vscode/
+
+# TLS certificates and private keys
+certs/
+
+# macOS
+.DS_Store
+
+# Logs and local data
 *.log
+postgres_data/
+
+# Backups and temporary copies
+*.dump
+*_backup*.sql
+*.bak
+*.backup

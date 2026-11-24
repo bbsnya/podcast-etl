@@ -1,89 +1,218 @@
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+  image: podcast-etl-airflow:2.7.3
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${AIRFLOW_DB:-airflow_db}?sslmode=verify-full&sslrootcert=/opt/airflow/ca.crt
+    PYTHONPATH: /opt/airflow
+    POSTGRES_USER: ${POSTGRES_USER}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    POSTGRES_DB: ${POSTGRES_DB}
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-prefer}
+    POSTGRES_SSLROOTCERT: /opt/airflow/ca.crt
+    MINIO_ENDPOINT: minio:9000
+    MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    MINIO_BUCKET: ${MINIO_BUCKET:-podcast-lake}
+    MINIO_SECURE: ${MINIO_SECURE:-false}
+    MINIO_CA_CERT: /opt/airflow/ca.crt
+    PUSHGATEWAY_URL: pushgateway:9091
+    SEARCH_TERM: ${SEARCH_TERM:-technology}
+    LIMIT: ${LIMIT:-50}
+    LOAD_MODE: ${LOAD_MODE:-incremental}
+    REQUIRE_TLS: ${REQUIRE_TLS:-true}
+    MAX_WORKERS: ${MAX_WORKERS:-8}
+    MAX_EPISODES_PER_FEED: ${MAX_EPISODES_PER_FEED:-500}
+    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./src:/opt/airflow/src
+    - ./tests:/opt/airflow/tests
+    - ./pytest.ini:/opt/airflow/pytest.ini
+    - airflow_logs:/opt/airflow/logs
+    - ./certs/ca/ca.crt:/opt/airflow/ca.crt:ro
+  depends_on:
+    postgres:
+      condition: service_healthy
+
 services:
   postgres:
     image: postgres:15
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/var/lib/postgresql/data/tls/server.crt
+      - -c
+      - ssl_key_file=/var/lib/postgresql/data/tls/server.key
     container_name: podcast_postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+      # 00_create_databases.sh (airflow_db, metabase_db) → init.sql (схема DWH)
+      - ./sql:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  minio:
+    image: pgsty/silo:latest
+    container_name: podcast_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio_data:/data
+      - ./certs/minio:/tmp/.silo/certs:ro
+
+  minio-init:
+    image: pgsty/mc:latest
+    container_name: podcast_minio_init
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET:-podcast-lake}
+    volumes:
+       - ./certs/ca/ca.crt:/root/.mc/certs/CAs/ca.crt:ro
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local https://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}; do sleep 2; done;
+      mc mb --ignore-existing local/$${MINIO_BUCKET};
+      exit 0;"
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: podcast_airflow_init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        airflow db migrate
+        airflow users create --username "$${AIRFLOW_ADMIN_USER}" --password "$${AIRFLOW_ADMIN_PASSWORD}" \
+          --firstname Admin --lastname User --role Admin --email admin@example.com || echo "Пользователь уже существует"
+    environment:
+      <<: *airflow-env
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
 
   airflow-webserver:
-    image: apache/airflow:2.7.3
+    <<: *airflow-common
     container_name: podcast_airflow_webserver
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_HOST=postgres
-      - PYTHONPATH=/opt/airflow
+    restart: unless-stopped
+    command: webserver
     ports:
       - "8080:8080"
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./src:/opt/airflow/src
-      - ./tests:/opt/airflow/tests
-      - ./requirements.txt:/requirements.txt
-    command: >
-      bash -c "pip install -r /requirements.txt &&
-               airflow db init &&
-               airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com &&
-               airflow webserver"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
     depends_on:
       postgres:
         condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
 
   airflow-scheduler:
-    image: apache/airflow:2.7.3
+    <<: *airflow-common
     container_name: podcast_airflow_scheduler
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_HOST=postgres
-      - PYTHONPATH=/opt/airflow
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./src:/opt/airflow/src
-      - ./tests:/opt/airflow/tests
-      - ./requirements.txt:/requirements.txt
-    command: >
-      bash -c "pip install -r /requirements.txt &&
-               airflow scheduler"
+    restart: unless-stopped
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$$(hostname)\""]
+      interval: 30s
+      timeout: 15s
+      retries: 5
     depends_on:
       postgres:
         condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  pushgateway:
+    image: prom/pushgateway:v1.9.0
+    container_name: podcast_pushgateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9091:9091"
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: podcast_prometheus
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - pushgateway
+
+  grafana:
+    image: grafana/grafana:10.4.5
+    container_name: podcast_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
 
   metabase:
-    image: metabase/metabase:latest
+    image: metabase/metabase:v0.65.6.3
     container_name: podcast_metabase
+    restart: unless-stopped
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: metabase_db
+      MB_DB_PORT: 5432
+      MB_DB_USER: ${POSTGRES_USER}
+      MB_DB_PASS: ${POSTGRES_PASSWORD}
+      MB_DB_HOST: postgres
+      MB_DB_CONNECTION_URI: "jdbc:postgresql://postgres:5432/metabase_db?sslmode=verify-full&sslrootcert=/opt/metabase/ca.crt"
     ports:
       - "3000:3000"
-    environment:
-      - MB_DB_TYPE=postgres
-      - MB_DB_DBNAME=metabase_db
-      - MB_DB_PORT=5432
-      - MB_DB_USER=${POSTGRES_USER}
-      - MB_DB_PASS=${POSTGRES_PASSWORD}
-      - MB_DB_HOST=postgres
+    volumes:
+      - ./certs/ca/ca.crt:/opt/metabase/ca.crt:ro
     depends_on:
       postgres:
         condition: service_healthy
 
 volumes:
   postgres_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
+  airflow_logs:

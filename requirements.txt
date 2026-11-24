@@ -1,9 +1,13 @@
-requests==2.31.0
-pandas==2.0.3
-psycopg2-binary==2.9.9
-SQLAlchemy==1.4.54
-python-dotenv==1.0.0
-apache-airflow==2.7.3
-pytest==7.4.4
-python-dateutil==2.8.2
-Flask-Session==0.5.0
+# Apache Airflow 2.7.3 и psycopg2 уже входят в образ apache/airflow:2.7.3-python3.10
+requests>=2.31,<3
+pandas>=2.0.3,<2.2
+SQLAlchemy>=1.4.54,<2.0
+psycopg2-binary>=2.9.9
+python-dotenv>=1.0.0
+python-dateutil>=2.8.2
+defusedxml>=0.7.1
+minio>=7.2.5
+prometheus-client>=0.20.0
+great_expectations>=0.18.8,<0.19
+pytest>=7.4,<8
+pytest-cov>=4.1
